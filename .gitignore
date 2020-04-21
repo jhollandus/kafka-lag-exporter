@@ -4,3 +4,4 @@ target
 *.iml
 application.conf
 !examples/standalone/application.conf
+.java-version

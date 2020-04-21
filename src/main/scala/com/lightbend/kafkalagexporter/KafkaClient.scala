@@ -150,12 +150,12 @@ class KafkaClient private[kafkalagexporter](cluster: KafkaCluster,
       groups <- adminClient.listConsumerGroups()
       groupIds = getGroupIds(groups)
       groupDescriptions <- adminClient.describeConsumerGroups(groupIds)
-      noMemberGroups = groupDescriptions.asScala.filter{ case (_, d) => d.members().isEmpty}.keys
-      noMemberGroupsPartitionsInfo <- Future.sequence(noMemberGroups.map(g => getGroupPartitionsInfo(g)))
+      allGroupMembers <- Future.sequence(groupIds.map(g => getGroupPartitionsInfo(g)))
     } yield {
+
       val gtps = groupDescriptions.asScala.flatMap { case (id, desc) => groupTopicPartitions(id, desc) }.toList
-      val gtpsNoMembers = noMemberGroupsPartitionsInfo.flatten
-      (groupIds, gtps ++ gtpsNoMembers)
+      val gtpsAllMembers = allGroupMembers.flatten
+      (groupIds, gtpsAllMembers ++ gtps)
     }
   }
 
@@ -165,15 +165,18 @@ class KafkaClient private[kafkalagexporter](cluster: KafkaCluster,
   def getGroupPartitionsInfo(groupId: String): Future[List[Domain.GroupTopicPartition]] = {
     for {
       offsetsMap <- adminClient.listConsumerGroupOffsets(groupId)
-      topicPartitions = offsetsMap.keySet.asScala.toList
-    } yield topicPartitions.map(ktp => Domain.GroupTopicPartition(
+    } yield for {
+        ktp <- offsetsMap.keySet.asScala.toList
+        if cluster.topicWhitelist.exists (r => ktp.topic ().matches (r))
+        if ! cluster.topicBlacklist.exists (r => ktp.topic ().matches (r))
+    } yield Domain.GroupTopicPartition(
       groupId,
       "unknown",
       "unknown",
       "unknown",
       ktp.topic(),
       ktp.partition()
-    ))
+    )
   }
 
   private[kafkalagexporter] def getGroupIds(groups: util.Collection[ConsumerGroupListing]): List[String] =
